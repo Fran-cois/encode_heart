@@ -8,3 +8,8 @@ __pycache__/
 *.mov
 *.mkv
 /uploads/
+
+# Next.js
+nextjs-app/node_modules/
+nextjs-app/.next/
+nextjs-app/out/
