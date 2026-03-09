@@ -30,25 +30,33 @@ export function getVideoMeta(video: HTMLVideoElement): VideoMeta {
 }
 
 /**
- * Extract all frames from a video as ImageData.
- * Uses requestVideoFrameCallback if available, otherwise a time-stepping approach.
+ * Extract all frames from a video as ImageData, optionally scaled down.
  *
  * @param video - loaded HTMLVideoElement (must have loadeddata fired)
  * @param onProgress - optional progress callback (0-1)
+ * @param maxWidth - optional max width; frames are scaled proportionally if the video is wider
  * @returns array of ImageData for each frame + actual fps
  */
 export async function extractFrames(
   video: HTMLVideoElement,
-  onProgress?: (p: number) => void
+  onProgress?: (p: number) => void,
+  maxWidth: number = 320
 ): Promise<{ frames: ImageData[]; fps: number }> {
+  let w = video.videoWidth;
+  let h = video.videoHeight;
+  if (maxWidth && w > maxWidth) {
+    const scale = maxWidth / w;
+    w = maxWidth;
+    h = Math.round(h * scale);
+  }
+
   const canvas = document.createElement("canvas");
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+  canvas.width = w;
+  canvas.height = h;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 
-  // Estimate fps by stepping through the video
   const duration = video.duration;
-  const fps = 30; // assume 30fps for frame stepping
+  const fps = 30;
   const dt = 1 / fps;
   const frames: ImageData[] = [];
 
@@ -59,14 +67,63 @@ export async function extractFrames(
     video.currentTime = t;
     await waitForSeek(video);
 
-    ctx.drawImage(video, 0, 0);
-    frames.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+    ctx.drawImage(video, 0, 0, w, h);
+    frames.push(ctx.getImageData(0, 0, w, h));
 
     if (onProgress) onProgress(t / duration);
   }
 
   if (onProgress) onProgress(1);
   return { frames, fps };
+}
+
+/**
+ * Process video frames one-by-one in a streaming fashion (no bulk storage).
+ * Calls `onFrame` for each frame with the ImageData and frame index.
+ * The ImageData is reused between calls, so the callback must extract
+ * whatever it needs before returning.
+ */
+export async function forEachFrame(
+  video: HTMLVideoElement,
+  onFrame: (frame: ImageData, index: number) => void | Promise<void>,
+  onProgress?: (p: number) => void,
+  maxWidth: number = 320
+): Promise<{ count: number; fps: number; width: number; height: number }> {
+  let w = video.videoWidth;
+  let h = video.videoHeight;
+  if (maxWidth && w > maxWidth) {
+    const scale = maxWidth / w;
+    w = maxWidth;
+    h = Math.round(h * scale);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+
+  const duration = video.duration;
+  const fps = 30;
+  const dt = 1 / fps;
+  let index = 0;
+
+  video.currentTime = 0;
+  await waitForSeek(video);
+
+  for (let t = 0; t < duration; t += dt) {
+    video.currentTime = t;
+    await waitForSeek(video);
+
+    ctx.drawImage(video, 0, 0, w, h);
+    const frame = ctx.getImageData(0, 0, w, h);
+    await onFrame(frame, index);
+    index++;
+
+    if (onProgress) onProgress(t / duration);
+  }
+
+  if (onProgress) onProgress(1);
+  return { count: index, fps, width: w, height: h };
 }
 
 function waitForSeek(video: HTMLVideoElement): Promise<void> {

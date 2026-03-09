@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef } from "react";
 import type { AppState } from "@/app/page";
 import { Card, Btn, ProgressBar, StatPill } from "./ui";
-import { loadVideo, extractFrames } from "@/lib/video";
+import { loadVideo, forEachFrame } from "@/lib/video";
 import { detectFace, resetFaceSmoothing } from "@/lib/face";
 import { extractGreenMean } from "@/lib/rppg";
 import { bandpassFilter, computeSpectrum } from "@/lib/dsp";
@@ -59,25 +59,24 @@ export default function DetectTab({ state }: Props) {
       setProgress(0);
       const video = await loadVideo(state.videoFile);
 
-      setPhase("Extraction des frames…");
-      const { frames, fps } = await extractFrames(video, (p) => setProgress(p * 50));
-
-      if (abortRef.current) return;
-
-      setPhase("Détection du visage et extraction du signal rPPG…");
+      setPhase("Extraction du signal rPPG (frame par frame)…");
       resetFaceSmoothing();
       const greenSignal: number[] = [];
 
-      for (let i = 0; i < frames.length; i++) {
-        const frame = frames[i];
-        const roi = await detectFace(frame, frame.width, frame.height);
-        if (roi) {
-          greenSignal.push(extractGreenMean(frame, roi));
-        } else {
-          greenSignal.push(greenSignal.length > 0 ? greenSignal[greenSignal.length - 1] : 0);
-        }
-        if (i % 10 === 0) setProgress(50 + (i / frames.length) * 40);
-      }
+      const { fps } = await forEachFrame(
+        video,
+        async (frame, i) => {
+          const roi = await detectFace(frame, frame.width, frame.height);
+          if (roi) {
+            greenSignal.push(extractGreenMean(frame, roi));
+          } else {
+            greenSignal.push(greenSignal.length > 0 ? greenSignal[greenSignal.length - 1] : 0);
+          }
+          if (i % 10 === 0) setProgress((i / (video.duration * 30)) * 90);
+        },
+        undefined,
+        320
+      );
 
       if (abortRef.current) return;
 
@@ -109,7 +108,7 @@ export default function DetectTab({ state }: Props) {
       const specF = freqs.filter((_, i) => i % specStep === 0).filter((f) => f <= 15);
       const specP = power.filter((_, i) => i % specStep === 0).slice(0, specF.length);
 
-      setResult({ bpm, peakFreq, signalRaw: rawDown, signalFiltered: filtDown, specFreqs: specF, specPower: specP, fps, totalFrames: frames.length });
+      setResult({ bpm, peakFreq, signalRaw: rawDown, signalFiltered: filtDown, specFreqs: specF, specPower: specP, fps, totalFrames: greenSignal.length });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
