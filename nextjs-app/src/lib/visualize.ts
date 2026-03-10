@@ -7,6 +7,8 @@ import { Config } from "./config";
 import { textToBits } from "./bits";
 import { detectFace, resetFaceSmoothing } from "./face";
 
+const yieldToUI = () => new Promise<void>(r => setTimeout(r, 0));
+
 /**
  * Render a heatmap visualization of the difference between source and encoded frames.
  */
@@ -17,7 +19,8 @@ export async function renderVisualization(
   secret: string,
   amplitude: number = Config.MODULATION_AMPLITUDE,
   segmentDuration: number = Config.SEGMENT_DURATION,
-  onProgress?: (p: number) => void
+  onProgress?: (p: number) => void,
+  signal?: AbortSignal
 ): Promise<ImageData[]> {
   const bits = secret ? textToBits(secret) : [];
   const framesPerSeg = Math.round(segmentDuration * fps);
@@ -136,6 +139,8 @@ export async function renderVisualization(
 
     outFrames.push(ctx.getImageData(0, 0, width, height));
     if (onProgress) onProgress((fi + 1) / count);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    if (fi % 10 === 9) await yieldToUI();
   }
 
   return outFrames;

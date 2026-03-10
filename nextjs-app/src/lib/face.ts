@@ -165,8 +165,10 @@ function detectFaceBySkinColor(
       const r = pixels[i],
         g = pixels[i + 1],
         b = pixels[i + 2];
-      // Simple skin-color heuristic (YCbCr-based check in RGB space)
-      if (r > 60 && g > 40 && b > 20 && r > g && r > b && r - g > 15 && r - b > 15) {
+      // YCbCr skin-color detection (works across diverse skin tones)
+      const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+      const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+      if (cb >= 77 && cb <= 127 && cr >= 133 && cr <= 173) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;

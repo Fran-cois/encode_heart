@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { AppState } from "@/app/page";
 import { Card, Btn, ProgressBar, BitGrid, StatPill } from "./ui";
 import { loadVideo, extractFrames } from "@/lib/video";
@@ -30,6 +30,11 @@ export default function DecodeTab({ state, setVideo }: Props) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<DecodeResult | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const onFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -50,6 +55,8 @@ export default function DecodeTab({ state, setVideo }: Props) {
 
   const runDecode = useCallback(async () => {
     if (!state.videoFile) return;
+    const ac = new AbortController();
+    abortRef.current = ac;
     setRunning(true);
     setError("");
     setResult(null);
@@ -61,17 +68,23 @@ export default function DecodeTab({ state, setVideo }: Props) {
 
       setPhase("Extraction des frames…");
       const { frames, fps } = await extractFrames(video, (p) => setProgress(p * 40));
+      if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
       setPhase("Décodage du message…");
-      const decResult = await decode(frames, fps, undefined, (p) => setProgress(40 + p * 60));
+      const decResult = await decode(frames, fps, undefined, (p) => setProgress(40 + p * 60), ac.signal);
 
       setResult(decResult);
       setProgress(100);
       setPhase("");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        setPhase("Annulé");
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setRunning(false);
+      abortRef.current = null;
     }
   }, [state.videoFile]);
 
@@ -116,9 +129,12 @@ export default function DecodeTab({ state, setVideo }: Props) {
         {state.videoFile && (
           <>
             <video src={state.videoUrl} controls className="w-full max-w-[640px] rounded-lg mb-4" />
-            <Btn onClick={runDecode} disabled={running}>
-              {running ? "⏳ Décodage en cours…" : "🔍 Décoder"}
-            </Btn>
+            <div className="flex gap-3">
+              <Btn onClick={runDecode} disabled={running}>
+                {running ? "⏳ Décodage en cours…" : "🔍 Décoder"}
+              </Btn>
+              {running && <Btn variant="danger" onClick={cancel}>✕ Annuler</Btn>}
+            </div>
             {running && <ProgressBar value={progress} label={phase} />}
           </>
         )}
@@ -140,7 +156,14 @@ export default function DecodeTab({ state, setVideo }: Props) {
             <div className="flex flex-wrap gap-4 mb-4">
               <StatPill value={result.bits.length} label="Bits décodés" />
               <StatPill value={result.segments.length} label="Segments" />
+              <StatPill value={`${Math.round(result.avgConfidence * 100)}%`} label="Confiance moy." />
             </div>
+
+            {result.avgConfidence < 0.3 && (
+              <div className="bg-yellow-900/20 border border-yellow-500/40 text-yellow-400 rounded-lg p-3 mb-4 text-sm">
+                ⚠️ Confiance faible — le message décodé peut contenir des erreurs.
+              </div>
+            )}
 
             <h4 className="text-sm font-medium text-gray-400 mb-2">Bits décodés</h4>
             <BitGrid bits={result.bits} />
@@ -148,7 +171,7 @@ export default function DecodeTab({ state, setVideo }: Props) {
 
           {/* Spectrum per segment (first few) */}
           <Card>
-            <h3 className="text-md font-semibold mb-3">📊 Spectre par segment (premiers)</h3>
+            <h3 className="text-md font-semibold mb-3">📊 Spectre par segment ({Math.min(6, result.segments.length)} sur {result.segments.length})</h3>
             {result.segments.slice(0, 6).map((seg, idx) => (
               <div key={idx} className="mb-4 p-3 bg-[#0f1117] rounded-lg">
                 <div className="flex items-center gap-3 mb-2">
@@ -162,7 +185,7 @@ export default function DecodeTab({ state, setVideo }: Props) {
                     bit={seg.bit}
                   </span>
                   <span className="text-xs text-gray-500">
-                    Segment {seg.segment} {seg.isHeader ? "(header)" : "(payload)"} — P0={seg.powerF0} P1={seg.powerF1}
+                    Segment {seg.segment} {seg.isHeader ? "(header)" : "(payload)"} — P0={seg.powerF0} P1={seg.powerF1} — confiance {Math.round(seg.confidence * 100)}%
                   </span>
                 </div>
                 {seg.specFreqs.length > 0 && (

@@ -47,6 +47,10 @@ export default function DetectTab({ state }: Props) {
   const [error, setError] = useState("");
   const abortRef = useRef(false);
 
+  const cancel = useCallback(() => {
+    abortRef.current = true;
+  }, []);
+
   const run = useCallback(async () => {
     if (!state.videoFile) return;
     setRunning(true);
@@ -135,9 +139,12 @@ export default function DetectTab({ state }: Props) {
           <p className="text-gray-500 text-sm">Veuillez d&apos;abord enregistrer ou importer une vidéo.</p>
         ) : (
           <>
-            <Btn onClick={run} disabled={running}>
-              {running ? "⏳ Analyse en cours…" : "🔬 Lancer l'analyse"}
-            </Btn>
+            <div className="flex gap-3">
+              <Btn onClick={run} disabled={running}>
+                {running ? "⏳ Analyse en cours…" : "🔬 Lancer l'analyse"}
+              </Btn>
+              {running && <Btn variant="danger" onClick={cancel}>✕ Annuler</Btn>}
+            </div>
             {running && (
               <ProgressBar value={progress} label={phase} />
             )}

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useCallback, Dispatch, SetStateAction } from "react";
+import { useState, useCallback, useRef, Dispatch, SetStateAction } from "react";
 import type { AppState, TabId } from "@/app/page";
 import { Card, Btn, ProgressBar, BitGrid, StatPill } from "./ui";
 import { Config } from "@/lib/config";
 import { textToBits } from "@/lib/bits";
 import { loadVideo, extractFrames, framesToVideoBlob } from "@/lib/video";
 import { encode, EncodeResult } from "@/lib/encoder";
+import { decode, DecodeResult } from "@/lib/decoder";
 import { renderVisualization } from "@/lib/visualize";
 import {
   Chart as ChartJS,
@@ -39,22 +40,37 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [encResult, setEncResult] = useState<EncodeResult | null>(null);
+  const [verification, setVerification] = useState<DecodeResult | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Viz state
   const [vizProgress, setVizProgress] = useState(0);
   const [wizRunning, setWizRunning] = useState(false);
   const [vizUrl, setVizUrl] = useState("");
+  const vizAbortRef = useRef<AbortController | null>(null);
 
   // Estimate
   const estimateBits = secret ? textToBits(secret).length : 0;
   const framesPerSeg = Math.round(segDur * (state.fps || 30));
   const framesNeeded = framesPerSeg * estimateBits;
+  const minDurationSec = estimateBits * segDur;
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  const cancelViz = useCallback(() => {
+    vizAbortRef.current?.abort();
+  }, []);
 
   const runEncode = useCallback(async () => {
     if (!state.videoFile || !secret.trim()) return;
+    const ac = new AbortController();
+    abortRef.current = ac;
     setRunning(true);
     setError("");
     setEncResult(null);
+    setVerification(null);
 
     try {
       setPhase("Chargement de la vidéo…");
@@ -63,9 +79,10 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
       
       setPhase("Extraction des frames…");
       const { frames, fps } = await extractFrames(video, (p) => setProgress(p * 30));
+      if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
       setPhase("Encodage du secret…");
-      const result = await encode(frames, fps, secret, amplitude, segDur, (p) => setProgress(30 + p * 40));
+      const result = await encode(frames, fps, secret, amplitude, segDur, (p) => setProgress(30 + p * 40), ac.signal);
 
       setPhase("Génération du fichier vidéo…");
       const blob = await framesToVideoBlob(result.frames, fps, (p) => setProgress(70 + p * 30));
@@ -79,12 +96,27 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
       }));
 
       setEncResult(result);
+      
+      // Post-encode verification
+      setPhase("Vérification du décodage…");
+      try {
+        const verif = await decode(result.frames, fps, segDur, (p) => setProgress(90 + p * 10), ac.signal);
+        setVerification(verif);
+      } catch {
+        // verification is optional, don't fail the whole encode
+      }
+
       setProgress(100);
       setPhase("");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        setPhase("Annulé");
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setRunning(false);
+      abortRef.current = null;
     }
   }, [state.videoFile, secret, amplitude, segDur, setState]);
 
@@ -102,6 +134,8 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
   // Render visualization
   const runViz = useCallback(async () => {
     if (!state.sourceFrames || !state.encodedFrames) return;
+    const ac = new AbortController();
+    vizAbortRef.current = ac;
     setWizRunning(true);
     setVizProgress(0);
 
@@ -113,17 +147,23 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
         secret,
         amplitude,
         segDur,
-        (p) => setVizProgress(p * 60)
+        (p) => setVizProgress(p * 60),
+        ac.signal
       );
 
       const blob = await framesToVideoBlob(vizFrames, state.fps, (p) => setVizProgress(60 + p * 40));
       if (vizUrl) URL.revokeObjectURL(vizUrl);
       setVizUrl(URL.createObjectURL(blob));
       setVizProgress(100);
-    } catch {
-      setError("Erreur lors de la création de la visualisation");
+    } catch (e: unknown) {
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        // cancelled
+      } else {
+        setError("Erreur lors de la création de la visualisation");
+      }
     } finally {
       setWizRunning(false);
+      vizAbortRef.current = null;
     }
   }, [state.sourceFrames, state.encodedFrames, state.fps, secret, amplitude, segDur, vizUrl]);
 
@@ -168,7 +208,13 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
               />
               <p className="text-xs text-gray-600 mt-1">
                 {secret.length}/255 caractères · {estimateBits} bits (8 header + {Math.max(0, estimateBits - 8)} payload) · ~{framesNeeded} frames nécessaires
+                {minDurationSec > 0 && <> · durée vidéo min : {minDurationSec.toFixed(1)}s</>}
               </p>
+              {minDurationSec > 0 && state.videoFile && (
+                <p className="text-xs text-yellow-400/80 mt-1">
+                  💡 Assurez-vous que votre vidéo dure au moins {minDurationSec.toFixed(1)} secondes.
+                </p>
+              )}
             </div>
 
             {/* Parameters */}
@@ -199,9 +245,12 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
               </div>
             </div>
 
-            <Btn onClick={runEncode} disabled={running || !secret.trim()}>
-              {running ? "⏳ Encodage en cours…" : "🚀 Encoder"}
-            </Btn>
+            <div className="flex gap-3">
+              <Btn onClick={runEncode} disabled={running || !secret.trim()}>
+                {running ? "⏳ Encodage en cours…" : "🚀 Encoder"}
+              </Btn>
+              {running && <Btn variant="danger" onClick={cancel}>✕ Annuler</Btn>}
+            </div>
 
             {running && <ProgressBar value={progress} label={phase} />}
           </>
@@ -226,6 +275,19 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
             <h4 className="text-sm font-medium text-gray-400 mb-2">Bits encodés</h4>
             <BitGrid bits={encResult.bits} />
 
+            {/* Post-encode verification */}
+            {verification && (
+              <div className={`rounded-lg p-3 mt-3 text-sm border ${
+                verification.message === secret
+                  ? "bg-green-900/20 border-green-500/40 text-green-400"
+                  : "bg-red-900/20 border-red-500/40 text-red-400"
+              }`}>
+                {verification.message === secret
+                  ? `✅ Vérification OK — décodage correct (confiance ${Math.round(verification.avgConfidence * 100)}%)`
+                  : `⚠️ Vérification échouée — décodé : "${verification.message}" (confiance ${Math.round(verification.avgConfidence * 100)}%)`}
+              </div>
+            )}
+
             <div className="flex gap-3 mt-4">
               <Btn onClick={downloadEncoded}>💾 Télécharger la vidéo encodée</Btn>
               <Btn variant="secondary" onClick={goToDecode}>🔓 Décoder</Btn>
@@ -234,7 +296,7 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
 
           {/* Modulation chart for first few segments */}
           <Card>
-            <h3 className="text-md font-semibold mb-3">📈 Modulation (premiers segments)</h3>
+            <h3 className="text-md font-semibold mb-3">📈 Modulation ({Math.min(4, encResult.segments.length)} sur {encResult.segments.length} segments)</h3>
             {encResult.segments.slice(0, 4).map((seg, idx) => (
               <div key={idx} className="mb-4 p-3 bg-[#0f1117] rounded-lg">
                 <p className="text-xs text-gray-500 mb-2">
@@ -275,9 +337,12 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
           {/* Visualization */}
           <Card>
             <h3 className="text-md font-semibold mb-3">👁 Visualisation de l&apos;encodage</h3>
-            <Btn onClick={runViz} disabled={wizRunning}>
-              {wizRunning ? "⏳ Génération…" : "🎨 Générer la heatmap"}
-            </Btn>
+            <div className="flex gap-3">
+              <Btn onClick={runViz} disabled={wizRunning}>
+                {wizRunning ? "⏳ Génération…" : "🎨 Générer la heatmap"}
+              </Btn>
+              {wizRunning && <Btn variant="danger" onClick={cancelViz}>✕ Annuler</Btn>}
+            </div>
             {wizRunning && <ProgressBar value={vizProgress} label="Rendu de la visualisation…" />}
             {vizUrl && (
               <video

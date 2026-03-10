@@ -32,13 +32,16 @@ export interface EncodeResult {
  * Encode a secret into video frames.
  * Returns the modified frames + visualization data.
  */
+const yieldToUI = () => new Promise<void>(r => setTimeout(r, 0));
+
 export async function encode(
   frames: ImageData[],
   fps: number,
   secret: string,
   amplitude: number = Config.MODULATION_AMPLITUDE,
   segmentDuration: number = Config.SEGMENT_DURATION,
-  onProgress?: (p: number) => void
+  onProgress?: (p: number) => void,
+  signal?: AbortSignal
 ): Promise<EncodeResult> {
   const bits = textToBits(secret);
   const framesPerSeg = Math.round(segmentDuration * fps);
@@ -108,6 +111,8 @@ export async function encode(
     });
 
     if (onProgress) onProgress((bitIdx + 1) / bits.length);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    if (bitIdx % 4 === 3) await yieldToUI();
   }
 
   return { frames: outFrames, bits, segments, fps, framesPerSegment: framesPerSeg };
