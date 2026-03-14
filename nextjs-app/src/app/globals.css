@@ -1,1 +1,261 @@
 @import "tailwindcss";
+
+/* ─── Custom Properties ─── */
+:root {
+  --bg-deep: #0a0c10;
+  --bg-base: #0f1117;
+  --bg-card: #161921;
+  --bg-elevated: #1c1f2b;
+  --border: #252836;
+  --border-light: #2e3247;
+  --accent: #34d399;
+  --accent-glow: rgba(52, 211, 153, 0.15);
+  --accent-muted: rgba(52, 211, 153, 0.08);
+  --text-primary: #e5e7eb;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --radius: 14px;
+}
+
+/* ─── Base & Typography ─── */
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-feature-settings: "ss01", "ss02", "cv01";
+  letter-spacing: -0.01em;
+}
+
+/* ─── Hide scrollbar on tab nav ─── */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ─── Custom Scrollbar ─── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-light);
+}
+
+/* ─── Animations ─── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  50% { box-shadow: 0 0 20px 2px var(--accent-glow); }
+}
+@keyframes recording-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* ─── Orbital Animations ─── */
+@keyframes orbit-1 {
+  from { transform: rotate(0deg) translateX(var(--orbit-radius)) rotate(0deg); }
+  to   { transform: rotate(360deg) translateX(var(--orbit-radius)) rotate(-360deg); }
+}
+@keyframes orbit-2 {
+  from { transform: rotate(120deg) translateX(var(--orbit-radius)) rotate(-120deg); }
+  to   { transform: rotate(480deg) translateX(var(--orbit-radius)) rotate(-480deg); }
+}
+@keyframes orbit-3 {
+  from { transform: rotate(240deg) translateX(var(--orbit-radius)) rotate(-240deg); }
+  to   { transform: rotate(600deg) translateX(var(--orbit-radius)) rotate(-600deg); }
+}
+@keyframes orbit-reverse {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(-360deg); }
+}
+@keyframes orbit-forward {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes heart-beat {
+  0%, 100% { transform: scale(1); }
+  15% { transform: scale(1.15); }
+  30% { transform: scale(1); }
+  45% { transform: scale(1.08); }
+  60% { transform: scale(1); }
+}
+@keyframes ring-pulse {
+  0%, 100% { opacity: 0.15; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(1.04); }
+}
+
+.animate-orbit-1 {
+  --orbit-radius: 48px;
+  animation: orbit-1 8s linear infinite;
+}
+.animate-orbit-2 {
+  --orbit-radius: 48px;
+  animation: orbit-2 8s linear infinite;
+}
+.animate-orbit-3 {
+  --orbit-radius: 48px;
+  animation: orbit-3 8s linear infinite;
+}
+.animate-orbit-ring-1 {
+  animation: orbit-forward 20s linear infinite;
+}
+.animate-orbit-ring-2 {
+  animation: orbit-reverse 25s linear infinite;
+}
+.animate-orbit-ring-3 {
+  animation: orbit-forward 30s linear infinite;
+}
+.animate-heart-beat {
+  animation: heart-beat 1.8s ease-in-out infinite;
+}
+.animate-ring-pulse {
+  animation: ring-pulse 3s ease-in-out infinite;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out both;
+}
+.animate-slide-up {
+  animation: slideUp 0.5s ease-out both;
+}
+.animate-shimmer {
+  background-size: 200% auto;
+  animation: shimmer 2s linear infinite;
+}
+.animate-glow-pulse {
+  animation: glow-pulse 2.5s ease-in-out infinite;
+}
+.animate-recording-pulse {
+  animation: recording-pulse 1s ease-in-out infinite;
+}
+
+/* ─── Hero / Reveal Animations ─── */
+@keyframes pulse-draw {
+  0%   { stroke-dashoffset: 800; opacity: 0.3; }
+  50%  { opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0.3; }
+}
+@keyframes float-particle {
+  0%, 100% { transform: translateY(0) scale(1); opacity: 0.25; }
+  50%      { transform: translateY(-18px) scale(1.3); opacity: 0.5; }
+}
+@keyframes gradient-shift {
+  0%   { background-position: 0% center; }
+  100% { background-position: 200% center; }
+}
+
+.animate-pulse-draw {
+  stroke-dasharray: 800;
+  stroke-dashoffset: 800;
+  animation: pulse-draw 3s ease-in-out infinite;
+}
+.animate-float-particle {
+  animation: float-particle 6s ease-in-out infinite;
+}
+.animate-gradient-shift {
+  animation: gradient-shift 4s linear infinite;
+}
+
+/* Scroll-reveal utility */
+.reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.reveal-on-scroll.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Radial gradient helper */
+.bg-gradient-radial {
+  background: radial-gradient(circle, var(--tw-gradient-stops));
+}
+
+/* ─── Focus outline ─── */
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ─── Selection ─── */
+::selection {
+  background: rgba(52, 211, 153, 0.3);
+  color: white;
+}
+
+/* ─── Range Input ─── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 24px;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 999px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-top: -6px;
+  box-shadow: 0 0 8px var(--accent-glow);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 14px var(--accent-glow);
+}
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 999px;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: none;
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* ─── Textarea ─── */
+textarea {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+textarea:focus {
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}

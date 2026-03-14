@@ -40,7 +40,8 @@ export function getVideoMeta(video: HTMLVideoElement): VideoMeta {
 export async function extractFrames(
   video: HTMLVideoElement,
   onProgress?: (p: number) => void,
-  maxWidth: number = 320
+  maxWidth: number = 320,
+  signal?: AbortSignal
 ): Promise<{ frames: ImageData[]; fps: number }> {
   let w = video.videoWidth;
   let h = video.videoHeight;
@@ -55,7 +56,7 @@ export async function extractFrames(
   canvas.height = h;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 
-  const duration = video.duration;
+  const duration = await getFiniteDuration(video);
   const fps = 30;
   const dt = 1 / fps;
   const frames: ImageData[] = [];
@@ -64,8 +65,11 @@ export async function extractFrames(
   await waitForSeek(video);
 
   for (let t = 0; t < duration; t += dt) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     video.currentTime = t;
     await waitForSeek(video);
+    // Stop if the video can't seek further (unknown duration fallback)
+    if (video.ended || (t > 0 && Math.abs(video.currentTime - t) > dt * 2)) break;
 
     ctx.drawImage(video, 0, 0, w, h);
     frames.push(ctx.getImageData(0, 0, w, h));
@@ -87,7 +91,8 @@ export async function forEachFrame(
   video: HTMLVideoElement,
   onFrame: (frame: ImageData, index: number) => void | Promise<void>,
   onProgress?: (p: number) => void,
-  maxWidth: number = 320
+  maxWidth: number = 320,
+  signal?: AbortSignal
 ): Promise<{ count: number; fps: number; width: number; height: number }> {
   let w = video.videoWidth;
   let h = video.videoHeight;
@@ -102,7 +107,7 @@ export async function forEachFrame(
   canvas.height = h;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 
-  const duration = video.duration;
+  const duration = await getFiniteDuration(video);
   const fps = 30;
   const dt = 1 / fps;
   let index = 0;
@@ -111,8 +116,11 @@ export async function forEachFrame(
   await waitForSeek(video);
 
   for (let t = 0; t < duration; t += dt) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     video.currentTime = t;
     await waitForSeek(video);
+    // Stop if the video can't seek further (unknown duration fallback)
+    if (video.ended || (t > 0 && Math.abs(video.currentTime - t) > dt * 2)) break;
 
     ctx.drawImage(video, 0, 0, w, h);
     const frame = ctx.getImageData(0, 0, w, h);
@@ -126,18 +134,52 @@ export async function forEachFrame(
   return { count: index, fps, width: w, height: h };
 }
 
-function waitForSeek(video: HTMLVideoElement): Promise<void> {
+function waitForSeek(video: HTMLVideoElement, timeoutMs = 3000): Promise<void> {
   return new Promise((resolve) => {
     if (!video.seeking) {
       resolve();
       return;
     }
-    video.addEventListener("seeked", () => resolve(), { once: true });
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    video.addEventListener("seeked", settle, { once: true });
+    video.addEventListener("ended", settle, { once: true });
+    setTimeout(settle, timeoutMs);
   });
 }
 
 /**
+ * Resolve the finite duration of a video.
+ * MediaRecorder-produced WebM files often have duration = Infinity.
+ * This seeks to the end to force the browser to resolve the real duration.
+ */
+async function getFiniteDuration(video: HTMLVideoElement): Promise<number> {
+  if (Number.isFinite(video.duration) && video.duration > 0) {
+    return video.duration;
+  }
+  // Seek to a very large time to force the browser to calculate the real duration
+  video.currentTime = 1e10;
+  await waitForSeek(video, 5000);
+  const dur = video.duration;
+  video.currentTime = 0;
+  await waitForSeek(video);
+  if (Number.isFinite(dur) && dur > 0) return dur;
+
+  // If duration is still unknown, extract frames until the video ends
+  // Use a generous fallback — callers will stop when seek stops advancing
+  console.warn("Could not determine video duration; falling back to 120s cap.");
+  return 120;
+}
+
+/**
  * Load a File/Blob into an HTMLVideoElement, wait until metadata is ready.
+ * Note: we do NOT revoke the blob URL here because the video element needs
+ * the source to remain accessible for seeking & canvas drawing (revoking
+ * early taints the canvas in some browsers).
  */
 export function loadVideo(file: File | Blob): Promise<HTMLVideoElement> {
   return new Promise((resolve, reject) => {
@@ -147,10 +189,13 @@ export function loadVideo(file: File | Blob): Promise<HTMLVideoElement> {
     video.preload = "auto";
     const url = URL.createObjectURL(file);
     video.src = url;
-    video.addEventListener("loadeddata", () => resolve(video), { once: true });
-    video.addEventListener("error", () => reject(new Error("Cannot load video")), {
-      once: true,
-    });
+    video.addEventListener("loadeddata", () => {
+      resolve(video);
+    }, { once: true });
+    video.addEventListener("error", () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Cannot load video"));
+    }, { once: true });
   });
 }
 

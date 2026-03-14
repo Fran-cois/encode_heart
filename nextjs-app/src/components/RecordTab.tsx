@@ -2,7 +2,9 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import type { AppState, TabId } from "@/app/page";
-import { Card, Btn } from "./ui";
+import { Card, Btn, SectionTitle, DropZone, ErrorBanner } from "./ui";
+
+const MIN_RECORDING_SECONDS = 35;
 
 interface Props {
   state: AppState;
@@ -31,15 +33,19 @@ export default function RecordTab({ state, setVideo, switchTab }: Props) {
         audio: false,
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
       setCameraOn(true);
     } catch (e: unknown) {
-      setError(`Impossible d'accéder à la caméra : ${e instanceof Error ? e.message : String(e)}`);
+      setError(`Unable to access camera: ${e instanceof Error ? e.message : String(e)}`);
     }
   }, []);
+
+  // Bind stream to video element once it's rendered
+  useEffect(() => {
+    if (cameraOn && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [cameraOn]);
 
   // Stop camera
   const stopCamera = useCallback(() => {
@@ -98,13 +104,39 @@ export default function RecordTab({ state, setVideo, switchTab }: Props) {
     if (timerRef.current) clearInterval(timerRef.current);
   }, []);
 
+  // Validate video duration before accepting
+  const validateAndSetVideo = useCallback(
+    (file: File) => {
+      setError("");
+      const url = URL.createObjectURL(file);
+      const el = document.createElement("video");
+      el.preload = "metadata";
+      el.onloadedmetadata = () => {
+        URL.revokeObjectURL(url);
+        if (el.duration < MIN_RECORDING_SECONDS) {
+          setError(
+            `Video is too short (${Math.floor(el.duration)}s). Minimum duration is ${MIN_RECORDING_SECONDS}s.`
+          );
+        } else {
+          setVideo(file);
+        }
+      };
+      el.onerror = () => {
+        URL.revokeObjectURL(url);
+        setError("Unable to read video file.");
+      };
+      el.src = url;
+    },
+    [setVideo]
+  );
+
   // File upload
   const onFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const f = e.target.files?.[0];
-      if (f) setVideo(f);
+      if (f) validateAndSetVideo(f);
     },
-    [setVideo]
+    [validateAndSetVideo]
   );
 
   // Drag and drop
@@ -112,9 +144,9 @@ export default function RecordTab({ state, setVideo, switchTab }: Props) {
     (e: React.DragEvent) => {
       e.preventDefault();
       const f = e.dataTransfer.files?.[0];
-      if (f && f.type.startsWith("video/")) setVideo(f);
+      if (f && f.type.startsWith("video/")) validateAndSetVideo(f);
     },
-    [setVideo]
+    [validateAndSetVideo]
   );
 
   const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -122,85 +154,86 @@ export default function RecordTab({ state, setVideo, switchTab }: Props) {
   return (
     <>
       <Card>
-        <h2 className="text-lg font-semibold mb-4">📹 Enregistrer une vidéo</h2>
+        <SectionTitle icon="📹">Record or import a video</SectionTitle>
 
-        {error && (
-          <div className="bg-red-900/20 border border-red-500/40 text-red-400 rounded-lg p-3 mb-4 text-sm">
-            {error}
+        {error && <ErrorBanner message={error} />}
+
+        {cameraOn ? (
+          <>
+            {/* Camera preview – full width inside the card */}
+            <div className="relative bg-black rounded-xl overflow-hidden mb-5 aspect-video mx-auto ring-1 ring-[var(--border)]">
+              <video
+                ref={videoRef}
+                className="w-full h-full object-cover"
+                playsInline
+                muted
+              />
+              {recording && (
+                <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/60 backdrop-blur-sm rounded-full px-3 py-1.5">
+                  <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-recording-pulse" />
+                  <span className="text-red-400 text-sm font-mono font-semibold">{fmt(elapsed)}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              {recording ? (
+                <Btn
+                  variant="danger"
+                  onClick={stopRecording}
+                  disabled={elapsed < MIN_RECORDING_SECONDS}
+                >
+                  {elapsed < MIN_RECORDING_SECONDS
+                    ? `⏳ Wait ${MIN_RECORDING_SECONDS - elapsed}s…`
+                    : "⬛ Stop recording"}
+                </Btn>
+              ) : (
+                <>
+                  <Btn onClick={startRecording}>🔴 Record</Btn>
+                  <Btn variant="secondary" onClick={stopCamera}>
+                    Close camera
+                  </Btn>
+                </>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="grid gap-6 sm:grid-cols-2">
+            {/* Option 1 – Start camera */}
+            <button
+              type="button"
+              onClick={startCamera}
+              className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] p-8 transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent)]/5 cursor-pointer"
+            >
+              <span className="text-4xl">📷</span>
+              <span className="text-sm font-medium text-[var(--text)]">Start camera</span>
+              <span className="text-xs text-[var(--text-muted)]">Record directly from your webcam</span>
+            </button>
+
+            {/* Option 2 – Import a file */}
+            <DropZone
+              id="file-input"
+              onFileChange={onFileChange}
+              onDrop={onDrop}
+              title="Import a video file"
+              subtitle="MP4, WebM, AVI, MOV…"
+            />
           </div>
         )}
-
-        {/* Camera preview */}
-        <div className="relative bg-black rounded-lg overflow-hidden mb-4 aspect-video max-w-[640px]">
-          <video
-            ref={videoRef}
-            className="w-full h-full object-cover"
-            playsInline
-            muted
-          />
-          {!cameraOn && (
-            <div className="absolute inset-0 flex items-center justify-center text-gray-600">
-              <span className="text-5xl">📷</span>
-            </div>
-          )}
-          {recording && (
-            <div className="absolute top-3 left-3 flex items-center gap-2">
-              <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-              <span className="text-red-400 text-sm font-mono">{fmt(elapsed)}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="flex gap-3">
-          {!cameraOn ? (
-            <Btn onClick={startCamera}>📷 Démarrer la caméra</Btn>
-          ) : recording ? (
-            <Btn variant="danger" onClick={stopRecording}>
-              ⬛ Arrêter l&apos;enregistrement
-            </Btn>
-          ) : (
-            <>
-              <Btn onClick={startRecording}>🔴 Enregistrer</Btn>
-              <Btn variant="secondary" onClick={stopCamera}>
-                Fermer la caméra
-              </Btn>
-            </>
-          )}
-        </div>
-      </Card>
-
-      <Card>
-        <h2 className="text-lg font-semibold mb-4">📂 Ou importer un fichier vidéo</h2>
-        <div
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={onDrop}
-          className="border-2 border-dashed border-[#2a2d3a] rounded-lg p-10 text-center hover:border-green-400/50 transition-colors cursor-pointer"
-          onClick={() => document.getElementById("file-input")?.click()}
-        >
-          <p className="text-gray-400 mb-2">Glissez-déposez un fichier vidéo ici, ou cliquez pour sélectionner</p>
-          <p className="text-xs text-gray-600">Format : MP4, WebM, AVI, MOV…</p>
-          <input
-            id="file-input"
-            type="file"
-            accept="video/*"
-            className="hidden"
-            onChange={onFileChange}
-          />
-        </div>
       </Card>
 
       {state.videoFile && (
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">✅ Vidéo prête</h2>
+        <Card className="animate-slide-up">
+          <SectionTitle icon="✅">Video ready</SectionTitle>
           <video
             src={state.videoUrl}
             controls
-            className="w-full max-w-[640px] rounded-lg mb-4"
+            className="w-full max-w-[640px] mx-auto rounded-xl mb-5 ring-1 ring-[var(--border)]"
           />
           <div className="flex gap-3">
-            <Btn onClick={() => switchTab("detect")}>💓 Détecter le BPM</Btn>
+            <Btn onClick={() => switchTab("detect")}>💓 Detect BPM</Btn>
             <Btn variant="secondary" onClick={() => switchTab("encode")}>
-              🔐 Encoder un secret
+              🔐 Encode a secret
             </Btn>
           </div>
         </Card>

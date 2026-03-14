@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, Dispatch, SetStateAction } from "react";
 import type { AppState, TabId } from "@/app/page";
-import { Card, Btn, ProgressBar, BitGrid, StatPill } from "./ui";
+import { Card, Btn, ProgressBar, BitGrid, StatPill, SectionTitle, EmptyState, ErrorBanner } from "./ui";
 import { Config } from "@/lib/config";
 import { textToBits } from "@/lib/bits";
 import { loadVideo, extractFrames, framesToVideoBlob } from "@/lib/video";
@@ -42,6 +42,8 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
   const [encResult, setEncResult] = useState<EncodeResult | null>(null);
   const [verification, setVerification] = useState<DecodeResult | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState("");
 
   // Viz state
   const [vizProgress, setVizProgress] = useState(0);
@@ -71,20 +73,23 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
     setError("");
     setEncResult(null);
     setVerification(null);
+    setShowPreview(false);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl("");
 
     try {
-      setPhase("Chargement de la vidéo…");
+      setPhase("Loading video…");
       setProgress(0);
       const video = await loadVideo(state.videoFile);
       
-      setPhase("Extraction des frames…");
-      const { frames, fps } = await extractFrames(video, (p) => setProgress(p * 30));
+      setPhase("Extracting frames…");
+      const { frames, fps } = await extractFrames(video, (p) => setProgress(p * 30), 320, ac.signal);
       if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-      setPhase("Encodage du secret…");
+      setPhase("Encoding secret…");
       const result = await encode(frames, fps, secret, amplitude, segDur, (p) => setProgress(30 + p * 40), ac.signal);
 
-      setPhase("Génération du fichier vidéo…");
+      setPhase("Generating video file…");
       const blob = await framesToVideoBlob(result.frames, fps, (p) => setProgress(70 + p * 30));
 
       setState((s) => ({
@@ -98,7 +103,7 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
       setEncResult(result);
       
       // Post-encode verification
-      setPhase("Vérification du décodage…");
+      setPhase("Verifying decode…");
       try {
         const verif = await decode(result.frames, fps, segDur, (p) => setProgress(90 + p * 10), ac.signal);
         setVerification(verif);
@@ -110,7 +115,7 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
       setPhase("");
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === 'AbortError') {
-        setPhase("Annulé");
+        setPhase("Cancelled");
       } else {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -159,7 +164,7 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
       if (e instanceof DOMException && e.name === 'AbortError') {
         // cancelled
       } else {
-        setError("Erreur lors de la création de la visualisation");
+        setError("Error creating visualization");
       }
     } finally {
       setWizRunning(false);
@@ -180,47 +185,61 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
     responsive: true,
     animation: false as const,
     scales: {
-      x: { ticks: { color: "#6b7280", maxTicksLimit: 8 }, grid: { color: "#1f2937" } },
-      y: { ticks: { color: "#6b7280" }, grid: { color: "#1f2937" } },
+      x: { ticks: { color: "#4b5563", maxTicksLimit: 8 }, grid: { color: "#1a1d27" } },
+      y: { ticks: { color: "#4b5563" }, grid: { color: "#1a1d27" } },
     },
-    plugins: { legend: { labels: { color: "#d1d5db" } } },
-    elements: { point: { radius: 0 } },
+    plugins: { legend: { labels: { color: "#9ca3af", font: { size: 11 } } } },
+    elements: { point: { radius: 0 }, line: { tension: 0.3 } },
   };
 
   return (
     <>
       <Card>
-        <h2 className="text-lg font-semibold mb-4">🔐 Encoder un secret</h2>
+        <SectionTitle icon="🔐">Encode a secret</SectionTitle>
 
         {!state.videoFile ? (
-          <p className="text-gray-500 text-sm">Veuillez d&apos;abord enregistrer ou importer une vidéo.</p>
+          <EmptyState icon="🎥" message="Please record or import a video first." />
+        ) : !state.analysisRun ? (
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <span className="text-4xl mb-3 opacity-40">💓</span>
+            <p className="text-sm text-[var(--text-muted)] mb-4">You need to run the BPM analysis first before encoding.</p>
+            <Btn onClick={() => switchTab("detect")}>💓 Go to Detect BPM</Btn>
+          </div>
         ) : (
           <>
             {/* Secret input */}
-            <div className="mb-4">
-              <label className="block text-sm text-gray-400 mb-1">Message secret</label>
+            <div className="mb-5">
+              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">Secret message</label>
               <textarea
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
-                placeholder="Entrez votre message secret ici…"
-                className="w-full bg-[#0f1117] border border-[#2a2d3a] rounded-lg p-3 text-sm text-gray-200 resize-y min-h-[80px] focus:border-green-400 outline-none"
+                placeholder="Enter your secret message here…"
+                className="w-full bg-[var(--bg-base)] border border-[var(--border)] rounded-xl p-4 text-sm text-[var(--text-primary)] resize-y min-h-[90px] focus:border-emerald-400/60 outline-none placeholder:text-[var(--text-muted)]"
                 maxLength={255}
               />
-              <p className="text-xs text-gray-600 mt-1">
-                {secret.length}/255 caractères · {estimateBits} bits (8 header + {Math.max(0, estimateBits - 8)} payload) · ~{framesNeeded} frames nécessaires
-                {minDurationSec > 0 && <> · durée vidéo min : {minDurationSec.toFixed(1)}s</>}
-              </p>
+              <div className="flex items-center justify-between mt-2">
+                <p className="text-xs text-[var(--text-muted)]">
+                  {secret.length}/255 characters · {estimateBits} bits (8 header + {Math.max(0, estimateBits - 8)} payload) · ~{framesNeeded} frames
+                  {minDurationSec > 0 && <> · min: {minDurationSec.toFixed(1)}s</>}
+                </p>
+                <div className="h-1 w-24 bg-[var(--border)] rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-400 transition-all" style={{ width: `${Math.min(100, (secret.length / 255) * 100)}%` }} />
+                </div>
+              </div>
               {minDurationSec > 0 && state.videoFile && (
-                <p className="text-xs text-yellow-400/80 mt-1">
-                  💡 Assurez-vous que votre vidéo dure au moins {minDurationSec.toFixed(1)} secondes.
+                <p className="text-xs text-amber-400/80 mt-2 flex items-center gap-1.5">
+                  <span>💡</span> Make sure your video is at least {minDurationSec.toFixed(1)} seconds long.
                 </p>
               )}
             </div>
 
             {/* Parameters */}
-            <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-5 p-4 bg-[var(--bg-base)] rounded-xl border border-[var(--border)]">
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Amplitude : {amplitude}</label>
+                <label className="flex items-center justify-between text-sm text-[var(--text-secondary)] mb-2">
+                  <span>Amplitude</span>
+                  <span className="font-mono text-emerald-400 text-xs">{amplitude}</span>
+                </label>
                 <input
                   type="range"
                   min="1"
@@ -228,11 +247,14 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
                   step="0.5"
                   value={amplitude}
                   onChange={(e) => setAmplitude(parseFloat(e.target.value))}
-                  className="w-full accent-green-400"
+                  className="w-full"
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Durée segment : {segDur}s</label>
+                <label className="flex items-center justify-between text-sm text-[var(--text-secondary)] mb-2">
+                  <span>Segment duration</span>
+                  <span className="font-mono text-emerald-400 text-xs">{segDur}s</span>
+                </label>
                 <input
                   type="range"
                   min="0.5"
@@ -240,66 +262,85 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
                   step="0.1"
                   value={segDur}
                   onChange={(e) => setSegDur(parseFloat(e.target.value))}
-                  className="w-full accent-green-400"
+                  className="w-full"
                 />
               </div>
             </div>
 
             <div className="flex gap-3">
               <Btn onClick={runEncode} disabled={running || !secret.trim()}>
-                {running ? "⏳ Encodage en cours…" : "🚀 Encoder"}
+                {running ? "⏳ Encoding in progress…" : "🚀 Encode"}
               </Btn>
-              {running && <Btn variant="danger" onClick={cancel}>✕ Annuler</Btn>}
+              {running && <Btn variant="danger" onClick={cancel}>✕ Cancel</Btn>}
             </div>
 
             {running && <ProgressBar value={progress} label={phase} />}
           </>
         )}
 
-        {error && (
-          <div className="bg-red-900/20 border border-red-500/40 text-red-400 rounded-lg p-3 mt-4 text-sm">{error}</div>
-        )}
+        {error && <ErrorBanner message={error} />}
       </Card>
 
       {encResult && (
         <>
-          <Card>
-            <h3 className="text-md font-semibold mb-3">✅ Encodage terminé</h3>
-            <div className="flex flex-wrap gap-4 mb-4">
-              <StatPill value={encResult.bits.length} label="Bits totaux" />
+          <Card className="animate-slide-up">
+            <SectionTitle icon="✅">Encoding complete</SectionTitle>
+            <div className="flex flex-wrap gap-4 mb-5">
+              <StatPill value={encResult.bits.length} label="Total bits" />
               <StatPill value={`${encResult.fps}`} label="FPS" />
               <StatPill value={encResult.framesPerSegment} label="Frames/segment" />
-              <StatPill value={`${encResult.segments[0]?.freqHz ?? ""} / ${Config.FREQ_BIT_1} Hz`} label="Fréquences" />
+              <StatPill value={`${encResult.segments[0]?.freqHz ?? ""} / ${Config.FREQ_BIT_1} Hz`} label="Frequencies" />
             </div>
 
-            <h4 className="text-sm font-medium text-gray-400 mb-2">Bits encodés</h4>
+            <h4 className="text-sm font-medium text-[var(--text-muted)] mb-2">Encoded bits</h4>
             <BitGrid bits={encResult.bits} />
 
             {/* Post-encode verification */}
             {verification && (
-              <div className={`rounded-lg p-3 mt-3 text-sm border ${
+              <div className={`rounded-xl p-4 mt-4 text-sm border flex items-start gap-3 animate-fade-in ${
                 verification.message === secret
-                  ? "bg-green-900/20 border-green-500/40 text-green-400"
-                  : "bg-red-900/20 border-red-500/40 text-red-400"
+                  ? "bg-emerald-500/8 border-emerald-500/25 text-emerald-400"
+                  : "bg-red-500/8 border-red-500/25 text-red-400"
               }`}>
-                {verification.message === secret
-                  ? `✅ Vérification OK — décodage correct (confiance ${Math.round(verification.avgConfidence * 100)}%)`
-                  : `⚠️ Vérification échouée — décodé : "${verification.message}" (confiance ${Math.round(verification.avgConfidence * 100)}%)`}
+                <span className="text-base mt-0.5">{verification.message === secret ? "✅" : "⚠️"}</span>
+                <span>
+                  {verification.message === secret
+                    ? `Verification OK — decode correct (confidence ${Math.round(verification.avgConfidence * 100)}%)`
+                    : `Verification failed — decoded: "${verification.message}" (confidence ${Math.round(verification.avgConfidence * 100)}%)`}
+                </span>
               </div>
             )}
 
-            <div className="flex gap-3 mt-4">
-              <Btn onClick={downloadEncoded}>💾 Télécharger la vidéo encodée</Btn>
-              <Btn variant="secondary" onClick={goToDecode}>🔓 Décoder</Btn>
+            <div className="flex gap-3 mt-5">
+              <Btn onClick={downloadEncoded}>💾 Download video</Btn>
+              <Btn variant="secondary" onClick={() => {
+                if (!showPreview && state.encodedBlob && !previewUrl) {
+                  setPreviewUrl(URL.createObjectURL(state.encodedBlob));
+                }
+                setShowPreview((v) => !v);
+              }}>
+                {showPreview ? "🙈 Hide video" : "▶️ View video"}
+              </Btn>
+              <Btn onClick={goToDecode}>🔓 Decode now</Btn>
             </div>
+
+            {showPreview && state.encodedBlob && (
+              <div className="mt-4">
+                <video
+                  src={previewUrl || undefined}
+                  controls
+                  className="w-full max-w-[640px] mx-auto rounded-xl ring-1 ring-[var(--border)]"
+                />
+              </div>
+            )}
           </Card>
 
           {/* Modulation chart for first few segments */}
-          <Card>
-            <h3 className="text-md font-semibold mb-3">📈 Modulation ({Math.min(4, encResult.segments.length)} sur {encResult.segments.length} segments)</h3>
+          <Card className="animate-slide-up">
+            <SectionTitle icon="📈">Modulation ({Math.min(4, encResult.segments.length)} of {encResult.segments.length} segments)</SectionTitle>
             {encResult.segments.slice(0, 4).map((seg, idx) => (
-              <div key={idx} className="mb-4 p-3 bg-[#0f1117] rounded-lg">
-                <p className="text-xs text-gray-500 mb-2">
+              <div key={idx} className="mb-4 p-4 bg-[var(--bg-base)] rounded-xl border border-[var(--border)]">
+                <p className="text-xs text-[var(--text-muted)] mb-2">
                   Segment {seg.bitIndex} — bit={seg.bitValue} — {seg.freqHz} Hz{" "}
                   {seg.isHeader ? "(header)" : "(payload)"}
                 </p>
@@ -308,47 +349,47 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
                     labels: seg.signalAfter.map((_, i) => String(i)),
                     datasets: [
                       {
-                        label: "Avant",
+                        label: "Before",
                         data: seg.signalBefore,
-                        borderColor: "#6b7280",
+                        borderColor: "#4b5563",
                         borderWidth: 1,
                       },
                       {
-                        label: "Après",
+                        label: "After",
                         data: seg.signalAfter,
-                        borderColor: "#22c55e",
-                        borderWidth: 1,
+                        borderColor: "#34d399",
+                        borderWidth: 1.5,
                       },
                       {
                         label: "Modulation",
                         data: seg.modulation,
-                        borderColor: "#f97316",
+                        borderColor: "#fb923c",
                         borderWidth: 1,
                         borderDash: [4, 4],
                       },
                     ],
                   }}
-                  options={{ ...chartOpts, plugins: { ...chartOpts.plugins, legend: { display: true, labels: { color: "#d1d5db", boxWidth: 10, font: { size: 10 } } } } }}
+                  options={{ ...chartOpts, plugins: { ...chartOpts.plugins, legend: { display: true, labels: { color: "#9ca3af", boxWidth: 10, font: { size: 10 } } } } }}
                 />
               </div>
             ))}
           </Card>
 
           {/* Visualization */}
-          <Card>
-            <h3 className="text-md font-semibold mb-3">👁 Visualisation de l&apos;encodage</h3>
+          <Card className="animate-slide-up">
+            <SectionTitle icon="👁">Encoding visualization</SectionTitle>
             <div className="flex gap-3">
               <Btn onClick={runViz} disabled={wizRunning}>
-                {wizRunning ? "⏳ Génération…" : "🎨 Générer la heatmap"}
+                {wizRunning ? "⏳ Generating…" : "🎨 Generate heatmap"}
               </Btn>
-              {wizRunning && <Btn variant="danger" onClick={cancelViz}>✕ Annuler</Btn>}
+              {wizRunning && <Btn variant="danger" onClick={cancelViz}>✕ Cancel</Btn>}
             </div>
-            {wizRunning && <ProgressBar value={vizProgress} label="Rendu de la visualisation…" />}
+            {wizRunning && <ProgressBar value={vizProgress} label="Rendering visualization…" />}
             {vizUrl && (
               <video
                 src={vizUrl}
                 controls
-                className="w-full max-w-[640px] rounded-lg mt-4"
+                className="w-full max-w-[640px] rounded-xl mt-4 ring-1 ring-[var(--border)]"
               />
             )}
           </Card>
