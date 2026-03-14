@@ -8,12 +8,12 @@ export const metadata: Metadata = {
   title: "Heart Codec – Your heart can hold all your secrets",
   description:
     "Hide secret messages inside a video using cardiac steganography. Open-source experimental tool.",
-  metadataBase: new URL("https://fran-cois.github.io/encode_heart"),
+  metadataBase: new URL("https://heart.famat.me"),
   openGraph: {
     title: "Heart Codec",
     description:
       "Hide secret messages inside a video by modulating the apparent heart rate detected through rPPG.",
-    url: "https://fran-cois.github.io/encode_heart",
+    url: "https://heart.famat.me",
     siteName: "Heart Codec",
     type: "website",
   },

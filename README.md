@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](LICENSE)
 [![Deploy](https://github.com/Fran-cois/encode_heart/actions/workflows/deploy.yml/badge.svg)](https://github.com/Fran-cois/encode_heart/actions/workflows/deploy.yml)
 
-> **[Live demo →](https://fran-cois.github.io/encode_heart)**
+> **[Live demo →](https://heart.famat.me)**
 
 Hide a secret message inside a video by modulating the **apparent heart rate**
 detected through remote photoplethysmography (rPPG).
@@ -58,7 +58,7 @@ npm run dev          # http://localhost:3000
 ```
 
 The app is automatically deployed to GitHub Pages on every push:
-**https://fran-cois.github.io/encode_heart**
+**https://heart.famat.me**
 
 ---
 

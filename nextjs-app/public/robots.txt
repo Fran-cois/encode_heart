@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://fran-cois.github.io/encode_heart/sitemap.xml
+Sitemap: https://heart.famat.me/sitemap.xml
