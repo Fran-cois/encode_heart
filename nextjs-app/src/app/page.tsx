@@ -220,14 +220,23 @@ export default function Home() {
                 <span className="text-[var(--text-muted)]">Selected video:</span>
                 <span className="text-emerald-400 font-medium">{videoNameRef.current}</span>
               </span>
-              <button
-                onClick={() =>
-                  setState((s) => ({ ...s, videoFile: null, videoUrl: "", encodedFrames: null, sourceFrames: null, encodedBlob: null, analysisRun: false }))
-                }
-                className="text-red-400/70 hover:text-red-400 transition-colors cursor-pointer"
-              >
-                ✕ remove
-              </button>
+              <span className="flex items-center gap-3">
+                <a
+                  href={state.videoUrl}
+                  download={videoNameRef.current || "video.webm"}
+                  className="text-emerald-400/70 hover:text-emerald-400 transition-colors cursor-pointer"
+                >
+                  ⬇ download
+                </a>
+                <button
+                  onClick={() =>
+                    setState((s) => ({ ...s, videoFile: null, videoUrl: "", encodedFrames: null, sourceFrames: null, encodedBlob: null, analysisRun: false }))
+                  }
+                  className="text-red-400/70 hover:text-red-400 transition-colors cursor-pointer"
+                >
+                  ✕ remove
+                </button>
+              </span>
               </div>
             </div>
           )}

@@ -56,11 +56,15 @@ async function getNativeDetector(): Promise<FaceDetector | null> {
  * Detect face in an ImageData and return the forehead ROI.
  * Uses native FaceDetector when available, otherwise falls back to
  * skin-color detection.
+ *
+ * When `forBpm` is true a larger skin ROI covering the cheeks is returned,
+ * which produces a stronger rPPG signal for BPM estimation.
  */
 export async function detectFace(
   imageData: ImageData | HTMLCanvasElement | HTMLVideoElement,
   width: number,
-  height: number
+  height: number,
+  forBpm: boolean = false
 ): Promise<FaceROI | null> {
   let faceRect: { x: number; y: number; w: number; h: number } | null = null;
 
@@ -71,12 +75,17 @@ export async function detectFace(
       const faces = await detector.detect(imageData as ImageBitmapSource);
       if (faces.length > 0) {
         const bb = faces[0].boundingBox;
-        faceRect = {
+        const candidate = {
           x: Math.round(bb.x),
           y: Math.round(bb.y),
           w: Math.round(bb.width),
           h: Math.round(bb.height),
         };
+        // Reject implausible aspect ratios
+        const aspect = candidate.w / Math.max(candidate.h, 1);
+        if (aspect >= 0.5 && aspect <= 1.5) {
+          faceRect = candidate;
+        }
       }
     } catch {
       // Fall through to fallback
@@ -105,8 +114,9 @@ export async function detectFace(
     smoothedRect = { ...faceRect };
   }
 
-  // Compute forehead ROI
-  const [rxs, rys, rxe, rye] = Config.FOREHEAD_RATIO;
+  // Choose ROI ratio: larger skin area for BPM, forehead for encoding
+  const ratio = forBpm ? Config.SKIN_ROI_RATIO : Config.FOREHEAD_RATIO;
+  const [rxs, rys, rxe, rye] = ratio;
   const fx = smoothedRect.x + Math.round(smoothedRect.w * rxs);
   const fy = smoothedRect.y + Math.round(smoothedRect.h * rys);
   const fw = Math.round(smoothedRect.w * (rxe - rxs));
@@ -116,11 +126,65 @@ export async function detectFace(
     return null;
   }
 
-  return { fx, fy, fw, fh };
+  const roi = { fx, fy, fw, fh };
+
+  // Validate skin content — reject ROIs that land on background
+  if (!validateSkin(imageData, width, height, roi)) {
+    return null;
+  }
+
+  return roi;
 }
 
 export function resetFaceSmoothing() {
   smoothedRect = null;
+}
+
+/**
+ * Validate that a ROI contains enough skin-coloured pixels (YCbCr).
+ * Rejects ROIs that land on background (walls, etc.).
+ */
+function validateSkin(
+  source: ImageData | HTMLCanvasElement | HTMLVideoElement,
+  width: number,
+  height: number,
+  roi: FaceROI
+): boolean {
+  let pixels: Uint8ClampedArray;
+  let pw = width;
+
+  if (source instanceof ImageData) {
+    pixels = source.data;
+    pw = source.width;
+  } else {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(source as CanvasImageSource, 0, 0, width, height);
+    const id = ctx.getImageData(0, 0, width, height);
+    pixels = id.data;
+    pw = width;
+  }
+
+  const { fx, fy, fw, fh } = roi;
+  let skinCount = 0;
+  let total = 0;
+
+  for (let y = fy; y < fy + fh && y < height; y++) {
+    for (let x = fx; x < fx + fw && x < pw; x++) {
+      const i = (y * pw + x) * 4;
+      const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+      const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+      const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+      if (cb >= 75 && cb <= 130 && cr >= 130 && cr <= 180) {
+        skinCount++;
+      }
+      total++;
+    }
+  }
+
+  return total > 0 && skinCount / total >= Config.SKIN_MIN_FRACTION;
 }
 
 /**

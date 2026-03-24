@@ -1,7 +1,7 @@
 """Remote photoplethysmography (rPPG) – extract pulse signal and estimate heart rate."""
 
 import numpy as np
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, detrend
 
 from heart_codec.config import Config
 from heart_codec.face import FaceDetector
@@ -30,6 +30,55 @@ def extract_green_signal(frames: list[np.ndarray], fps: float) -> np.ndarray:
             signal.append(0.0)
 
     return np.array(signal, dtype=np.float64)
+
+
+def extract_chrom_signal(frames: list[np.ndarray], fps: float) -> np.ndarray:
+    """Extract pulse signal using CHROM (de Haan & Jeanne, 2013).
+
+    Uses all three colour channels with chrominance-based combination to
+    reject ambient illumination changes (e.g. wall reflections) and
+    produce a cleaner pulse waveform for BPM estimation.
+
+    Only frames where a valid skin ROI is detected are included; frames
+    without a face are simply skipped (no sample-and-hold).
+    """
+    detector = FaceDetector()
+    r_vals: list[float] = []
+    g_vals: list[float] = []
+    b_vals: list[float] = []
+
+    for frame in frames:
+        roi = detector.detect(frame, for_bpm=True)
+        if roi is not None:
+            fx, fy, fw, fh = roi
+            patch = frame[fy : fy + fh, fx : fx + fw]
+            b_vals.append(float(np.mean(patch[:, :, 0])))
+            g_vals.append(float(np.mean(patch[:, :, 1])))
+            r_vals.append(float(np.mean(patch[:, :, 2])))
+
+    if len(r_vals) < 10:
+        return np.array([], dtype=np.float64)
+
+    r = np.array(r_vals, dtype=np.float64)
+    g = np.array(g_vals, dtype=np.float64)
+    b = np.array(b_vals, dtype=np.float64)
+
+    # Normalise by temporal mean
+    r = r / (np.mean(r) + 1e-10)
+    g = g / (np.mean(g) + 1e-10)
+    b = b / (np.mean(b) + 1e-10)
+
+    # CHROM: chrominance-based method
+    xs = 3.0 * r - 2.0 * g
+    ys = 1.5 * r + g - 1.5 * b
+
+    alpha = np.std(xs) / (np.std(ys) + 1e-10)
+    signal = xs - alpha * ys
+
+    # Remove linear trend
+    signal = detrend(signal, type="linear")
+
+    return signal
 
 
 def bandpass_filter(signal: np.ndarray, fps: float,
@@ -99,6 +148,8 @@ def estimate_heart_rate_from_video(video_path: str) -> tuple[float, float]:
     if len(frames) < int(fps * 2):
         raise ValueError("Video too short for reliable heart rate estimation (need ≥ 2 s)")
 
-    signal = extract_green_signal(frames, fps)
+    signal = extract_chrom_signal(frames, fps)
+    if len(signal) == 0:
+        raise ValueError("No face detected in the video")
     bpm, _, _ = estimate_heart_rate(signal, fps)
     return bpm, fps

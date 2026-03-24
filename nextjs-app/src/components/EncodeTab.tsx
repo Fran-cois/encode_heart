@@ -249,6 +249,9 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
                   onChange={(e) => setAmplitude(parseFloat(e.target.value))}
                   className="w-full"
                 />
+                <p className="text-[10px] text-[var(--text-muted)] mt-1.5 leading-snug">
+                  Controls how visible the pixel changes are. Higher = more robust decoding, but less discreet.
+                </p>
               </div>
               <div>
                 <label className="flex items-center justify-between text-sm text-[var(--text-secondary)] mb-2">
@@ -264,6 +267,9 @@ export default function EncodeTab({ state, setState, setVideo, switchTab }: Prop
                   onChange={(e) => setSegDur(parseFloat(e.target.value))}
                   className="w-full"
                 />
+                <p className="text-[10px] text-[var(--text-muted)] mt-1.5 leading-snug">
+                  Longer segments are more robust (more cycles to detect the frequency) but reduce throughput (fewer bits per second).
+                </p>
               </div>
             </div>
 

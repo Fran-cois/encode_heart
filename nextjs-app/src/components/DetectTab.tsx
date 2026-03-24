@@ -6,7 +6,7 @@ import { Card, Btn, ProgressBar, StatPill, SectionTitle, EmptyState, ErrorBanner
 import { Dispatch, SetStateAction } from "react";
 import { loadVideo, forEachFrame, framesToVideoBlob } from "@/lib/video";
 import { detectFace, resetFaceSmoothing } from "@/lib/face";
-import { extractGreenMean } from "@/lib/rppg";
+import { extractRGBMeans, chromSignal } from "@/lib/rppg";
 import { bandpassFilter, computeSpectrum } from "@/lib/dsp";
 import { estimateHeartRate } from "@/lib/rppg";
 import { Config } from "@/lib/config";
@@ -95,7 +95,7 @@ export default function DetectTab({ state, setState, switchTab }: Props) {
         video,
         async (frame, i) => {
           if (ac.signal.aborted) return;
-          const roi = await detectFace(frame, frame.width, frame.height);
+          const roi = await detectFace(frame, frame.width, frame.height, true);
           // Draw overlay on each frame
           const overlaid = drawFrameOverlay(frame, roi);
           vizFrames.push(overlaid);
@@ -139,7 +139,9 @@ export default function DetectTab({ state, setState, switchTab }: Props) {
 
       setPhase("Extracting rPPG signal (frame by frame)…");
       resetFaceSmoothing();
-      const greenSignal: number[] = [];
+      const rSignal: number[] = [];
+      const gSignal: number[] = [];
+      const bSignal: number[] = [];
 
       // Capture a mid-video frame with ROI overlay for visualization
       let vizFrameUrl: string | null = null;
@@ -148,16 +150,18 @@ export default function DetectTab({ state, setState, switchTab }: Props) {
       const { fps } = await forEachFrame(
         video,
         async (frame, i) => {
-          const roi = await detectFace(frame, frame.width, frame.height);
+          const roi = await detectFace(frame, frame.width, frame.height, true);
           if (roi) {
-            greenSignal.push(extractGreenMean(frame, roi));
+            const { r, g, b } = extractRGBMeans(frame, roi);
+            rSignal.push(r);
+            gSignal.push(g);
+            bSignal.push(b);
             // Capture a visualization frame near the middle of the video
             if (i === midTarget && !vizFrameUrl) {
               vizFrameUrl = renderRoiOverlay(frame, roi);
             }
-          } else {
-            greenSignal.push(greenSignal.length > 0 ? greenSignal[greenSignal.length - 1] : 0);
           }
+          // Skip frames without a face — no sample-and-hold
           if (i % 10 === 0) setProgress((i / (video.duration * 30)) * 90);
         },
         undefined,
@@ -168,16 +172,15 @@ export default function DetectTab({ state, setState, switchTab }: Props) {
       setPhase("Frequency analysis…");
       setProgress(90);
 
-      if (greenSignal.length === 0) {
-        throw new Error("No frames extracted from the video.");
+      if (rSignal.length < 10) {
+        throw new Error("Not enough face frames detected. Ensure a face is visible and well-lit.");
       }
 
-      // Remove DC
-      const mean = greenSignal.reduce((a, b) => a + b, 0) / greenSignal.length;
-      const centered = greenSignal.map((v) => v - mean);
+      // CHROM: multi-channel pulse extraction (rejects ambient light changes)
+      const chromSig = chromSignal(rSignal, gSignal, bSignal);
 
       // Bandpass filter
-      const filtered = bandpassFilter(centered, fps, Config.BANDPASS_LOW, Config.BANDPASS_HIGH);
+      const filtered = bandpassFilter(chromSig, fps, Config.BANDPASS_LOW, Config.BANDPASS_HIGH);
 
       // FFT spectrum
       const { freqs, power } = computeSpectrum(filtered, fps);
@@ -189,15 +192,15 @@ export default function DetectTab({ state, setState, switchTab }: Props) {
       setPhase("");
 
       // Downsample for charts
-      const step = Math.max(1, Math.floor(greenSignal.length / 500));
-      const rawDown = greenSignal.filter((_, i) => i % step === 0);
+      const step = Math.max(1, Math.floor(chromSig.length / 500));
+      const rawDown = chromSig.filter((_, i) => i % step === 0);
       const filtDown = filtered.filter((_, i) => i % step === 0);
 
       const specStep = Math.max(1, Math.floor(freqs.length / 300));
       const specF = freqs.filter((_, i) => i % specStep === 0).filter((f) => f <= 15);
       const specP = power.filter((_, i) => i % specStep === 0).slice(0, specF.length);
 
-      setResult({ bpm, peakFreq, signalRaw: rawDown, signalFiltered: filtDown, specFreqs: specF, specPower: specP, fps, totalFrames: greenSignal.length, vizFrameUrl });
+      setResult({ bpm, peakFreq, signalRaw: rawDown, signalFiltered: filtDown, specFreqs: specF, specPower: specP, fps, totalFrames: chromSig.length, vizFrameUrl });
       setState((s) => ({ ...s, analysisRun: true }));
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === 'AbortError') {
@@ -231,7 +234,8 @@ export default function DetectTab({ state, setState, switchTab }: Props) {
           <p className="mb-2">
             <strong className="text-[var(--text-primary)]">How it works:</strong> We use <em>remote photoplethysmography</em> (rPPG) — 
             a technique that extracts your pulse signal from video by tracking tiny color changes in the skin caused by blood flow.
-            The green channel of the forehead region is averaged frame-by-frame, then analyzed in the frequency domain to find the dominant pulse frequency.
+            The CHROM method combines the R, G, B channels from the face area to reject ambient light variations (wall reflections, illumination changes)
+            and isolate the true pulse signal, which is then analyzed in the frequency domain.
           </p>
           <p className="text-[var(--text-muted)]">
             ⚠️ <strong>The absolute BPM value may not be accurate</strong> — webcam quality, lighting, movement, and compression artifacts all affect the result. 
@@ -469,13 +473,14 @@ function renderRoiOverlay(frame: ImageData, roi: FaceROI): string {
   ctx.drawImage(tmp, 0, 0, w, h);
 
   // Compute face bounding box from forehead ROI
-  const [rX, rY, rW, rH] = Config.FOREHEAD_RATIO;
-  // forehead: fx = faceX + rX*faceW, fy = faceY + rY*faceH, fw = rW*faceW, fh = rH*faceH
-  // So we can invert: faceW = fw / rW, faceX = fx - rX * faceW, etc.
-  const faceW = roi.fw / rW;
-  const faceH = roi.fh / rH;
-  const faceX = roi.fx - rX * faceW;
-  const faceY = roi.fy - rY * faceH;
+  // Config stores [startX, startY, endX, endY] ratios, not [x, y, w, h]
+  const [rxs, rys, rxe, rye] = Config.FOREHEAD_RATIO;
+  // forehead: fx = faceX + rxs*faceW, fw = (rxe-rxs)*faceW
+  // Invert: faceW = fw / (rxe - rxs), faceX = fx - rxs * faceW
+  const faceW = roi.fw / (rxe - rxs);
+  const faceH = roi.fh / (rye - rys);
+  const faceX = roi.fx - rxs * faceW;
+  const faceY = roi.fy - rys * faceH;
 
   // Draw face bounding box
   ctx.strokeStyle = "#34d399";
@@ -520,11 +525,12 @@ function drawFrameOverlay(frame: ImageData, roi: FaceROI | null): ImageData {
 
   if (roi) {
     // Compute face bounding box from forehead ROI
-    const [rX, rY, rW, rH] = Config.FOREHEAD_RATIO;
-    const faceW = roi.fw / rW;
-    const faceH = roi.fh / rH;
-    const faceX = roi.fx - rX * faceW;
-    const faceY = roi.fy - rY * faceH;
+    // Config stores [startX, startY, endX, endY] ratios
+    const [rxs, rys, rxe, rye] = Config.FOREHEAD_RATIO;
+    const faceW = roi.fw / (rxe - rxs);
+    const faceH = roi.fh / (rye - rys);
+    const faceX = roi.fx - rxs * faceW;
+    const faceY = roi.fy - rys * faceH;
 
     // Face bounding box (dashed)
     ctx.strokeStyle = "#34d399";

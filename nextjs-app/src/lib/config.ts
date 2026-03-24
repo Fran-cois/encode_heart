@@ -12,4 +12,6 @@ export const Config = {
   DECODE_BANDPASS_HIGH: 10.0,
   FOREHEAD_RATIO: [0.2, 0.0, 0.8, 0.3] as const,
   FACE_SMOOTH_ALPHA: 0.3,
+  SKIN_ROI_RATIO: [0.1, 0.2, 0.9, 0.75] as const,
+  SKIN_MIN_FRACTION: 0.2,
 };

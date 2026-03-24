@@ -33,3 +33,10 @@ class Config:
 
     # Maximum frames without face detection before giving up on tracking
     FACE_LOST_MAX_FRAMES = 30
+
+    # Skin ROI for BPM detection: larger central face area covering cheeks
+    # (x_start, y_start, x_end, y_end) relative to face bounding box
+    SKIN_ROI_RATIO = (0.1, 0.2, 0.9, 0.75)
+
+    # Minimum fraction of skin-colored pixels needed to validate an ROI
+    SKIN_MIN_FRACTION = 0.2
